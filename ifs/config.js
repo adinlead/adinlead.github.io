@@ -141,8 +141,8 @@ const leaders = {
         {
             nickname: 'AgennyBrof',
             contacts: [{
-                title: '微信',
-                account: 'agennybrof',
+                title: '',
+                account: '',
                 link: '',
                 qrLink: ''
             }]
@@ -156,11 +156,6 @@ const leaders = {
                 account: 'imbeyond',
                 link: 'https://u.wechat.com/EKxpEyvPo1tFwa7df2cl__c?s=2',
                 qrLink: 'https://u.wechat.com/EKxpEyvPo1tFwa7df2cl__c?s=2'
-            },{
-                title: 'Telegram',
-                account: '@adinlead',
-                link: 'https://t.me/adinlead',
-                qrLink: ''
             }]
         }
     ]

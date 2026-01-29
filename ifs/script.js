@@ -288,6 +288,9 @@ document.initEvents.push(function () {
                 
                 if (leader.contacts && leader.contacts.length > 0) {
                     leader.contacts.forEach(contact => {
+                        if (!contact.title) {
+                            return;
+                        }
                         html += `<div class="contact-item">
                             <p><strong>${contact.title}：</strong>`;
                             

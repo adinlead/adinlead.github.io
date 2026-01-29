@@ -159,7 +159,7 @@ const leaders = {
             },{
                 title: 'Telegram',
                 account: '@adinlead',
-                link: '',
+                link: 'https://t.me/adinlead',
                 qrLink: ''
             }]
         }

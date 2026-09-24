@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Waystones 野外石碑坐标查找器</title>
+<style>
+  :root {
+    --bg: #15171c;
+    --panel: #1d2028;
+    --panel-2: #252934;
+    --border: #343a48;
+    --text: #e6e8ee;
+    --muted: #9aa3b5;
+    --brand: #0fdc78;
+    --brand-dim: #0ab861;
+    --danger: #e8463a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 24px;
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.6 "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
+  code { background: var(--panel-2); padding: 1px 6px; border-radius: 4px; font-family: Consolas, monospace; font-size: 13px; }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 16px;
+  }
+  .form-row { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
+  .field { display: flex; flex-direction: column; gap: 6px; }
+  .field label { font-size: 12px; color: var(--muted); }
+  .field input, .field select {
+    width: 150px;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    padding: 9px 12px;
+    font-size: 14px;
+    outline: none;
+  }
+  .field input:focus, .field select:focus { border-color: var(--brand-dim); }
+  .field select option { background: var(--panel-2); color: var(--text); }
+  button {
+    background: var(--brand);
+    color: #06351c;
+    border: none;
+    border-radius: 8px;
+    padding: 10px 22px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button:hover { background: var(--brand-dim); color: #fff; }
+  .note { font-size: 12px; color: var(--muted); margin-top: 10px; }
+  .warn { color: #f0b350; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { padding: 7px 10px; text-align: right; border-bottom: 1px solid var(--border); font-family: Consolas, monospace; }
+  th { color: var(--muted); font-weight: 500; font-family: inherit; }
+  th:first-child, td:first-child, td.l { text-align: left; }
+  tr:hover td { background: var(--panel-2); }
+  canvas { background: var(--panel-2); border-radius: 8px; display: block; }
+  .layout { display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-start; }
+  .layout > div { flex: 1 1 420px; min-width: 320px; }
+  .legend { font-size: 12px; color: var(--muted); margin-top: 8px; display: flex; gap: 16px; }
+  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 5px; }
+</style>
+</head>
+<body>
+
+<h1>Waystones 野外石碑坐标查找器</h1>
+<div class="sub">
+  复刻 <code>WaystonePlacement.isWaystoneChunk()</code>：位置完全由世界种子决定（确定性伪随机，非真随机）。
+  间距按默认配置 <code>chunksBetweenWildWaystones = 25</code>（约 400 格），输出的方块 X/Z 为区块原点（16 的整数倍）；
+  坐标使用所选维度自身的坐标系（下界不与主世界做 1:8 换算）。
+  <span id="yNote">Y 坐标由实际世界的 <code>OCEAN_FLOOR_WG</code> 高度图决定，无法离线计算。</span>
+</div>
+
+<div class="panel">
+  <div class="form-row">
+    <div class="field">
+      <label>种子 Seed（数字；非数字按 MC 文本种子哈希）</label>
+      <input id="seed" value="12345">
+    </div>
+    <div class="field">
+      <label>维度</label>
+      <select id="dim">
+        <option value="overworld">主世界 (Overworld)</option>
+        <option value="nether">下界 (Nether)</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>中心坐标 X</label>
+      <input id="x" type="number" value="0">
+    </div>
+    <div class="field">
+      <label>中心坐标 Z（Minecraft 水平轴）</label>
+      <input id="z" type="number" value="0">
+    </div>
+    <div class="field">
+      <label>数量 n（1–500）</label>
+      <input id="n" type="number" value="10" min="1" max="500">
+    </div>
+    <button id="run">查找</button>
+  </div>
+  <div class="note" id="status"></div>
+</div>
+
+<div class="layout">
+  <div class="panel" style="margin-bottom:0">
+    <canvas id="map" width="520" height="520"></canvas>
+    <div class="legend">
+      <span><span class="dot" style="background:#0fdc78"></span>石碑</span>
+      <span><span class="dot" style="background:#e8463a"></span>输入坐标</span>
+      <span style="margin-left:auto">单位：区块（1 格 = 16 方块）</span>
+    </div>
+  </div>
+  <div class="panel" style="margin-bottom:0; max-height:560px; overflow:auto">
+    <table>
+      <thead>
+        <tr>
+          <th>#</th><th>区块 X</th><th>区块 Z</th><th>方块 X</th><th>方块 Z</th><th>距离(格)</th>
+        </tr>
+      </thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+/* =====================================================================
+ * 一、复刻 java.util.Random（48 位 LCG）
+ * 常量与拒绝采样算法必须与 JDK 完全一致，否则 nextInt(13) 结果不同。
+ * ===================================================================== */
+const MASK48 = (1n << 48n) - 1n;
+const MASK64 = (1n << 64n) - 1n;
+const LCG_MULT = 0x5DEECE66Dn;
+const LCG_ADD  = 11n;
+
+/**
+ * 创建一个 Java Random 等价物。
+ * @param {bigint} seedLong - Java long 语义的种子（64 位溢出已在上游处理）
+ * @returns {{nextInt: (bound:number)=>number}}
+ */
+function makeJavaRandom(seedLong) {
+    // Random(long): seed = (seed ^ 0x5DEECE66DL) & ((1L << 48) - 1)
+    let s = (seedLong ^ LCG_MULT) & MASK48;
+
+    // next(bits): seed = (seed * 25214903917 + 11) & 2^48-1; 返回高 bits 位（有符号 int）
+    function next(bits) {
+        s = (s * LCG_MULT + LCG_ADD) & MASK48;
+        return Number(BigInt.asIntN(32, s >> BigInt(48 - bits)));
+    }
+
+    // nextInt(bound)：bound=13 不是 2 的幂，走拒绝采样分支
+    function nextInt(bound) {
+        while (true) {
+            const bits = next(31);
+            const val = bits % bound;
+            // Java: bits - val + (bound - 1) < 0 时拒绝重试（会再推进一次 LCG）
+            if (bits - val + (bound - 1) >= 0) return val;
+        }
+    }
+    return { nextInt };
+}
+
+/* =====================================================================
+ * 二、复刻 WaystonePlacement.isWaystoneChunk()
+ *
+ *   maxDeviation = ceil(chunkDistance / 2)            // 默认 13
+ *   devGridX = chunkX * maxDeviation                  // Java int 乘法（32 位溢出）
+ *   devGridZ = chunkZ * maxDeviation
+ *   random = new Random(seed * devGridX * devGridZ)   // Java long 乘法（64 位溢出）
+ *   chunkOffsetX = random.nextInt(maxDeviation)       // 0..12
+ *   chunkOffsetZ = random.nextInt(maxDeviation)
+ *   命中: (chunkX + chunkOffsetX) % distance == 0
+ *        && (chunkZ + chunkOffsetZ) % distance == 0
+ * ===================================================================== */
+const CHUNK_DISTANCE = 25;          // 对应配置 chunksBetweenWildWaystones
+const MAX_DEVIATION = Math.ceil(CHUNK_DISTANCE / 2); // 13
+const D = BigInt(MAX_DEVIATION);
+
+/**
+ * 解析种子输入：纯数字按 long 解析；文本按 MC 的 31 多项式 64 位哈希解析。
+ * @param {string} text
+ * @returns {bigint}
+ */
+function parseSeed(text) {
+    const t = text.trim();
+    if (/^[+-]?\d+$/.test(t)) return BigInt(t) & MASK64;
+    let h = 0n;
+    for (let i = 0; i < t.length; i++) {
+        h = (h * 31n + BigInt(t.charCodeAt(i))) & MASK64;
+    }
+    return BigInt.asIntN(64, h);
+}
+
+/**
+ * 判断指定区块是否为野外石碑区块。
+ * @param {number} cx 区块 X
+ * @param {number} cz 区块 Z
+ * @param {bigint} worldSeed 世界种子
+ * @returns {{hit:boolean, ox:number, oz:number}}
+ */
+function isWaystoneChunk(cx, cz, worldSeed) {
+    // Math.imul 复刻 Java int * int 的 32 位溢出
+    const devGridX = Math.imul(cx, MAX_DEVIATION);
+    const devGridZ = Math.imul(cz, MAX_DEVIATION);
+    // seed 为 long，int 自动提升为 long，每步乘法按 64 位溢出
+    const rngSeed = (worldSeed * BigInt(devGridX) & MASK64) * BigInt(devGridZ) & MASK64;
+    const rng = makeJavaRandom(rngSeed);
+    const ox = rng.nextInt(MAX_DEVIATION);
+    const oz = rng.nextInt(MAX_DEVIATION);
+    // JS 的 % 对负数结果与 Java 同符号，判 0 语义一致
+    const hit = (cx + ox) % CHUNK_DISTANCE === 0 && (cz + oz) % CHUNK_DISTANCE === 0;
+    return { hit, ox, oz };
+}
+
+/* =====================================================================
+ * 三、按网格单元 (k, l) 枚举候选区块
+ *
+ * (cx + ox) % 25 == 0 且 ox ∈ [0,12]  =>  cx ∈ [25k-12, 25k]
+ * 每个 25x25 单元只需测 13x13=169 个区块；区间互不相交，全局无重复。
+ * 按 max(|k|,|l|) 环形向外扩展，并用“未扫描区域的距离下界”保证最近 n 个精确。
+ *
+ * 硬上限（防止极端输入阻塞主线程）：
+ *   - n 最大 500
+ *   - 环形最大 200 层（约 ±80000 格）
+ *   - 区块判定次数预算 300 万
+ * ===================================================================== */
+const MAX_N = 500, MAX_RING = 200, TEST_BUDGET = 3_000_000;
+
+/**
+ * 查找距离 (blockX, blockZ) 最近的 n 个石碑区块。
+ * @returns {{results:Array, truncated:boolean, tests:number}}
+ */
+function findNearest(worldSeed, blockX, blockZ, n) {
+    const hits = [];
+    let tests = 0;
+
+    /** 环形 r 的单元周长上的所有 (k,l)；r=0 只含 (0,0) */
+    function forEachCellInRing(r, fn) {
+        if (r === 0) { fn(0, 0); return; }
+        for (let k = -r; k <= r; k++) { fn(k, -r); fn(k, r); }
+        for (let l = -r + 1; l <= r - 1; l++) { fn(-r, l); fn(r, l); }
+    }
+
+    for (let r = 0; r <= MAX_RING; r++) {
+        forEachCellInRing(r, (k, l) => {
+            // 单元内 13x13 候选区块
+            for (let cx = CHUNK_DISTANCE * k - (MAX_DEVIATION - 1); cx <= CHUNK_DISTANCE * k; cx++) {
+                for (let cz = CHUNK_DISTANCE * l - (MAX_DEVIATION - 1); cz <= CHUNK_DISTANCE * l; cz++) {
+                    tests++;
+                    const res = isWaystoneChunk(cx, cz, worldSeed);
+                    if (res.hit) {
+                        // WaystonePlacement 输出的方块坐标即区块原点 (cx*16, ?, cz*16)
+                        const wx = cx * 16, wz = cz * 16;
+                        const dx = wx - blockX, dz = wz - blockZ;
+                        hits.push({ cx, cz, wx, wz, dist: Math.hypot(dx, dz) });
+                    }
+                }
+            }
+        });
+
+        if (tests > TEST_BUDGET) break; // 预算耗尽，走截断回退
+
+        /* 已收集足够候选后，计算所有“尚未扫描单元”中区块到中心的距离下界。
+         * 下界 ≥ 当前第 n 近距离时，结果在数学上已精确，可提前停止。 */
+        if (hits.length >= n) {
+            hits.sort((a, b) => a.dist - b.dist);
+            const nth = hits[n - 1].dist;
+            // 未扫描区域: |k| > r 或 |l| > r
+            // x 方向外侧射线区块: cx >= 25(r+1)-12  或  cx <= -25(r+1)
+            const cxPos = CHUNK_DISTANCE * (r + 1) - (MAX_DEVIATION - 1);
+            const cxNeg = -CHUNK_DISTANCE * (r + 1);
+            const dxRay = Math.min(
+                Math.max(0, cxPos * 16 - blockX),
+                Math.max(0, blockX - cxNeg * 16)
+            );
+            const dzRay = Math.min(
+                Math.max(0, cxPos * 16 - blockZ),
+                Math.max(0, blockZ - cxNeg * 16)
+            );
+            // 配对轴用已扫描单元的区块超集（连续整数区间）估最近，只会低估 => 仍是合法下界
+            const c0x = Math.trunc(blockX / 16), c0z = Math.trunc(blockZ / 16);
+            const cxAny = Math.max(-CHUNK_DISTANCE * r - (MAX_DEVIATION - 1),
+                                   Math.min(CHUNK_DISTANCE * r, c0x));
+            const czAny = Math.max(-CHUNK_DISTANCE * r - (MAX_DEVIATION - 1),
+                                   Math.min(CHUNK_DISTANCE * r, c0z));
+            const dxAny = Math.abs(cxAny * 16 - blockX);
+            const dzAny = Math.abs(czAny * 16 - blockZ);
+            const lowerBound = Math.min(
+                Math.hypot(dxRay, dzAny),
+                Math.hypot(dxAny, dzRay)
+            );
+            if (nth <= lowerBound) {
+                return { results: hits.slice(0, n), truncated: false, tests, rings: r + 1 };
+            }
+        }
+    }
+
+    // 回退分支：达到硬上限仍未能证明精确，返回当前最优并标记截断
+    hits.sort((a, b) => a.dist - b.dist);
+    return { results: hits.slice(0, n), truncated: true, tests, rings: MAX_RING + 1 };
+}
+
+/* =====================================================================
+ * 四、UI 渲染
+ * ===================================================================== */
+const $ = (id) => document.getElementById(id);
+
+/**
+ * 按维度返回 Y 坐标查找规则说明。
+ * 主世界与下界 X/Z 命中算法相同（同一种子同一网格，见 WaystonePlacement.isWaystoneChunk），
+ * 但 Y 的确定方式不同（见 WaystonePlacement.modify 的下界分支）。
+ */
+function yRule(dim) {
+    if (dim === "nether") {
+        return `下界 Y：从 <code>OCEAN_FLOOR_WG</code> 高度开始往下逐格扫描，`
+            + `找到第一个“上方是空气、自身非空气/非流体/非基岩”的方块，Y = 其上方位置。`
+            + `依赖实际方块状态，无法离线计算。`;
+    }
+    return `主世界 Y：由 <code>OCEAN_FLOOR_WG</code> 高度图决定（地表/海底表面），无法离线计算。`;
+}
+
+function renderTable(results) {
+    $("rows").innerHTML = results.map((p, i) =>
+        `<tr><td>${i + 1}</td><td>${p.cx}</td><td>${p.cz}</td>`
+        + `<td>${p.wx}</td><td>${p.wz}</td><td>${p.dist.toFixed(1)}</td></tr>`
+    ).join("");
+}
+
+function renderMap(results, blockX, blockZ, dim) {
+    const cv = $("map"), ctx = cv.getContext("2d");
+    const W = cv.width;
+    ctx.clearRect(0, 0, W, W);
+    // 维度标注
+    ctx.fillStyle = "#9aa3b5";
+    ctx.font = "13px sans-serif";
+    ctx.textBaseline = "top";
+    ctx.fillText(dim === "nether" ? "下界 (Nether)" : "主世界 (Overworld)", 12, 12);
+    if (results.length === 0) return;
+
+    const cx0 = blockX / 16, cz0 = blockZ / 16;
+    // 缩放：让最远点留边距
+    const farthest = results[results.length - 1];
+    const span = Math.max(
+        Math.abs(farthest.cx - cx0), Math.abs(farthest.cz - cz0), 2
+    ) * 2 + 4;
+    const scale = (W - 40) / span;
+    const toX = (cx) => W / 2 + (cx - cx0) * scale;
+    const toY = (cz) => W / 2 + (cz - cz0) * scale;
+
+    // 网格
+    ctx.strokeStyle = "rgba(255,255,255,0.06)";
+    ctx.lineWidth = 1;
+    const gridStep = CHUNK_DISTANCE;
+    for (let gx = Math.floor((cx0 - span / 2) / gridStep); gx <= Math.ceil(cx0 + span / 2); gx++) {
+        ctx.beginPath(); ctx.moveTo(toX(gx * gridStep), 0); ctx.lineTo(toX(gx * gridStep), W); ctx.stroke();
+    }
+    for (let gz = Math.floor((cz0 - span / 2) / gridStep); gz <= Math.ceil(cz0 + span / 2); gz++) {
+        ctx.beginPath(); ctx.moveTo(0, toY(gz * gridStep)); ctx.lineTo(W, toY(gz * gridStep)); ctx.stroke();
+    }
+
+    // 中心到各点连线
+    ctx.strokeStyle = "rgba(15,220,120,0.25)";
+    for (const p of results) {
+        ctx.beginPath();
+        ctx.moveTo(W / 2, W / 2);
+        ctx.lineTo(toX(p.cx), toY(p.cz));
+        ctx.stroke();
+    }
+
+    // 石碑点
+    for (const p of results) {
+        ctx.fillStyle = "#0fdc78";
+        ctx.beginPath();
+        ctx.arc(toX(p.cx), toY(p.cz), 4, 0, Math.PI * 2);
+        ctx.fill();
+    }
+
+    // 输入坐标
+    ctx.fillStyle = "#e8463a";
+    ctx.beginPath();
+    ctx.arc(W / 2, W / 2, 6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "#fff";
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+}
+
+function run() {
+    const seedText = $("seed").value;
+    const dim = $("dim").value;
+    const blockX = parseInt($("x").value, 10);
+    const blockZ = parseInt($("z").value, 10);
+    let n = parseInt($("n").value, 10);
+
+    if (!Number.isFinite(blockX) || !Number.isFinite(blockZ)) {
+        $("status").innerHTML = '<span class="warn">请输入有效的 X / Z 坐标。</span>';
+        return;
+    }
+    if (!Number.isFinite(n) || n < 1) n = 1;
+    if (n > MAX_N) n = MAX_N;
+
+    // 依据维度更新 Y 查找规则说明
+    $("yNote").innerHTML = yRule(dim);
+
+    const t0 = performance.now();
+    const seed = parseSeed(seedText);
+    const { results, truncated, tests, rings } = findNearest(seed, blockX, blockZ, n);
+    const ms = (performance.now() - t0).toFixed(0);
+
+    renderTable(results);
+    renderMap(results, blockX, blockZ, dim);
+
+    const dimName = dim === "nether" ? "下界" : "主世界";
+    const material = dim === "nether" ? "黑石材质" : "按生物群系（默认 BIOME 样式）";
+    $("status").innerHTML = truncated
+        ? `<span class="warn">已达到搜索硬上限（${rings} 层网格 / ${tests.toLocaleString()} 次判定，耗时 ${ms} ms），`
+          + `仅返回当前最近的 ${results.length} 个结果，不保证全局最近。</span>`
+        : `种子解析为 long：<code>${seed}</code>；维度：<code>${dimName}</code>（${material}）；`
+          + `扫描 ${rings} 层网格、${tests.toLocaleString()} 个候选区块，耗时 ${ms} ms。`
+          + ` 共找到 ${results.length} 个石碑（结果对同一种子恒定可复现）。`;
+}
+
+$("run").addEventListener("click", run);
+$("dim").addEventListener("change", run);
+run();
+</script>
+</body>
+</html>
